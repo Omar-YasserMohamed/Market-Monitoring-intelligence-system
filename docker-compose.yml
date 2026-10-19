@@ -1,0 +1,221 @@
+services:
+  # ============================================================================
+  # 1. APACHE KAFKA (KRaft Mode - No ZooKeeper required, saves ~500MB RAM)
+  # ============================================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: food_delivery_kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # ============================================================================
+  # 2. MINIO S3 OBJECT STORAGE (Medallion Data Lake: Bronze, Silver, Gold)
+  # ============================================================================
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    container_name: food_delivery_minio
+    hostname: minio
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_secure_2026}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  # Auto-create the Medallion buckets (bronze, silver, gold) upon startup
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
+    container_name: food_delivery_minio_init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin_secure_2026};
+      /usr/bin/mc mb myminio/bronze --ignore-existing;
+      /usr/bin/mc mb myminio/silver --ignore-existing;
+      /usr/bin/mc mb myminio/gold --ignore-existing;
+      echo 'MinIO Medallion buckets initialized successfully!';
+      exit 0;
+      "
+    networks:
+      - de_network
+
+  # ============================================================================
+  # 3. POSTGRESQL DATA WAREHOUSE (Dimensional Star Schema)
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: food_delivery_postgres
+    hostname: postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_pwd_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-food_delivery_dwh}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # ============================================================================
+  # 4. APACHE AIRFLOW (Workflow Orchestration & Scheduling)
+  # ============================================================================
+  airflow-postgres:
+    image: postgres:15-alpine
+    container_name: food_delivery_airflow_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow_backend_pwd
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  airflow-init:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: food_delivery_airflow_init
+    depends_on:
+      - airflow-postgres
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow_backend_pwd@airflow-postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-airflow_secure_pwd_2026}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    command: version
+    networks:
+      - de_network
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: food_delivery_airflow_webserver
+    restart: always
+    depends_on:
+      - airflow-init
+      - airflow-postgres
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow_backend_pwd@airflow-postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__WEBSERVER__SECRET_KEY: 'msde_secret_key_airflow_2026'
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    command: webserver
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1-python3.10
+    container_name: food_delivery_airflow_scheduler
+    restart: always
+    depends_on:
+      - airflow-init
+      - airflow-postgres
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow_backend_pwd@airflow-postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    command: scheduler
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # ============================================================================
+  # 5. METABASE (Business Intelligence & Dashboards)
+  # ============================================================================
+  metabase:
+    image: metabase/metabase:v0.48.4
+    container_name: food_delivery_metabase
+    restart: always
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+    volumes:
+      - metabase_data:/metabase-data
+    networks:
+      - de_network
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+# ==============================================================================
+# NETWORKS & VOLUMES
+# ==============================================================================
+networks:
+  de_network:
+    name: food_delivery_network
+    driver: bridge
+
+volumes:
+  kafka_data:
+  minio_data:
+  postgres_data:
+  airflow_postgres_data:
+  metabase_data:

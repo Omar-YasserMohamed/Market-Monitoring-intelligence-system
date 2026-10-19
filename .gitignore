@@ -1,0 +1,39 @@
+# .gitignore for Data Engineering Platform
+
+# Environment variables & secrets
+.env
+*.env
+*.pem
+*.key
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.venv
+venv/
+ENV/
+.pytest_cache/
+
+# Data files & local caches (Must reside in MinIO, not Git)
+data/
+*.parquet
+*.csv
+*.json
+!contracts/*.json
+
+# Spark & Hadoop local storage
+metastore_db/
+derby.log
+checkpoint/
+spark-warehouse/
+
+# Airflow local logs
+airflow/logs/
+*.pid
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
