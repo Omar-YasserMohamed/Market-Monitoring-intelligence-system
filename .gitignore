@@ -16,9 +16,11 @@ ENV/
 .pytest_cache/
 
 # Data files & local caches (Must reside in MinIO, not Git)
-data/
+data/*
+!data/seed/
 *.parquet
 *.csv
+!data/seed/*.csv
 *.json
 !contracts/*.json
 

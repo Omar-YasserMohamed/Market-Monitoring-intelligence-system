@@ -1,0 +1,3 @@
+EXAMPLE
+Describe the problem your system solves. For example:
+Market information is distributed across different sources, making it difficult to compare entities, track historical changes, and analyze trends consistently. Our system integrates data from multiple sources into a centralized analytical platform.

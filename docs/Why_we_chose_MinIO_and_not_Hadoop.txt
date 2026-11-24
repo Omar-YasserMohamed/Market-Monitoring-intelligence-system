@@ -1,0 +1,12 @@
+1. Modern Cloud-Native Standard (Object Storage vs. Block Storage)
+The Industry Shift: In modern data engineering, the industry has largely moved away from on-premise Hadoop clusters toward cloud object storage like Amazon S3, Google Cloud Storage (GCS), or Azure Blob / ADLS Gen2.
+Why MinIO? MinIO is an S3-compatible object store. Writing Spark jobs, Airflow tasks, or ingestion pipelines against MinIO uses the exact same S3 APIs (s3a://...). If tomorrow you decide to deploy this project to AWS, Azure, or GCP, you change zero lines of pipeline code—only the connection URL and credentials. HDFS does not give you this cloud-native portability.
+
+
+2. في البداية كنت فاكر اننا هنشتغل كلنا على دوكر واحد  فا لما دورت لقيت ان HDFS هتبقى معقدة شوية في الحتة دي
+عشان هنحتاج 
+A NameNode (metadata master),
+A Secondary NameNode (checkpointing),
+Multiple DataNodes (workers),
+Complex network and heap memory configurations (often needing 4GB–8GB+ of RAM just for Hadoop infrastructure).
+MinIO Simplicity: MinIO is a single, compiled Go binary packaged in a clean, lightweight Docker container that uses under 200 MB of RAM and boots up in under 2 seconds. Since your project is already running Kafka, Zookeeper, Spark, Postgres, and Airflow on a local machine, HDFS would severely bottleneck your CPU and RAM.
